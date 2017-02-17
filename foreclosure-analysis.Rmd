@@ -1,0 +1,320 @@
+---
+output:
+  md_document:
+    variant: markdown_github
+---
+
+## **Not All Ships Rise**
+
+Sometimes, the saddest data lends itself to the most in-depth analysis. This is one of those cases. In this post, we are going to dive into the [foreclosure data](https://data.louisvilleky.gov/dataset/property-foreclosures) hosted on Louisville's data portal.
+
+## The Data
+
+## Analysis
+
+```{r setup, include=FALSE}
+
+## Load Packages
+
+# Data gathering
+library(acs)
+library(tigris)
+library(ggmap)
+
+# Data manipulation
+library(tidyverse)
+library(lubridate)
+
+# Data visualization
+library(leaflet)
+
+## Load Functions
+
+# Gets Euclidean distance between two points.
+get.euc.distance = function(point.1, point.2)
+{
+  return (sqrt(sum((point.1 - point.2) ^ 2)))
+}
+
+# Rebuild to pull relevant geoid
+get.min.tract = function(points.1, points.2)
+{
+  return (apply(points.1,
+                1,
+                function(point.1)
+                {
+                  distances = apply(points.2,
+                                    1,
+                                    function(point.2, point.1)
+                                    {
+                                      return (get.euc.distance(point.1, point.2))
+                                    },
+                                    point.1)
+                  
+                  return (shapes.tract.df$GEOID[which(distances == min(distances))][1])
+                }))
+}
+
+# Rebuild to pull relevant geoid
+get.min.block = function(points.1, points.2)
+{
+  return (apply(points.1,
+                1,
+                function(point.1)
+                {
+                  distances = apply(points.2,
+                                    1,
+                                    function(point.2, point.1)
+                                    {
+                                      return (get.euc.distance(point.1, point.2))
+                                    },
+                                    point.1)
+                  
+                  return (shapes.blocks.df$GEOID[which(distances == min(distances))][1])
+                }))
+}
+
+## Set Plot Theme
+theme_set(
+  theme_bw(base_family = 'Segoe UI', base_size = 12) +
+    theme(
+      plot.title = element_text(face = 'bold', hjust = 0),
+      text = element_text(colour = '#4e5c65'),
+      panel.background = element_rect('#ffffff'),
+      strip.background = element_rect('#ffffff', colour = 'white'),
+      plot.background = element_rect('#ffffff'),
+      panel.border = element_rect(colour = '#ffffff'),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      legend.background = element_rect('#ffffff'),
+      legend.title = element_blank(),
+      legend.position = 'right',
+      legend.direction = 'vertical',
+      legend.key = element_blank(),
+      strip.text = element_text(face = 'bold', size = 10),
+      axis.text = element_text(face = 'bold', size = 9),
+      axis.title = element_blank(),
+      axis.ticks = element_blank()
+    )
+)
+```
+
+
+```{r load-data, echo=FALSE, message=FALSE, eval=FALSE}
+
+# ## Load Foreclosure Data
+# foreclosures <- read_csv('https://data.louisvilleky.gov/sites/default/files/Foreclosures_0.csv')
+# 
+# # Build full addresses
+# foreclosures$full_address <- paste0(foreclosures$STNO, " ", foreclosures$STNAME, ", Louisville, KY")
+# 
+# # Geocode and capture lon/lat
+# foreclosures$lon <- geocode(foreclosures$full_address, output = 'latlon')$lon
+# foreclosures$lat <- geocode(foreclosures$full_address, output = 'latlon')$lat
+# 
+# # Write to csv to never have to geocode it again
+# write.csv(foreclosures, 'foreclosures.csv', row.names = FALSE)
+# 
+# Read csv in if the above has been done
+foreclosures <- read_csv('foreclosures.csv')
+
+## Load Census Data
+# Demographics pulled by block and tract:
+# | -- Home Ownership (B25003)
+# | -- Household Type (B11001)
+# | -- Income
+# | -- ?
+
+## Home Ownership
+
+# Create tract-level geography to pull data against
+geo.dat.tract <- geo.make(state = c("KY"),
+                county = c(111), 
+                tract = '*')
+
+# Create block-level geography to pull data against
+geo.dat.block <- geo.make(state = c("KY"),
+                county = c(111), 
+                tract = '*',
+                block.group = '*')
+
+# Pull tract-level data
+ownership.tract <- acs.fetch(endyear = 2015, 
+                    span = 5, 
+                    geography = geo.dat.tract,
+                    table.number = "B25003", 
+                    col.names = "pretty")
+
+# Pull block-level data
+ownership.block <- acs.fetch(endyear = 2015, 
+                    span = 5, 
+                    geography = geo.dat.block,
+                    table.number = "B25003", 
+                    col.names = "pretty")
+
+## Pull in Shapefiles
+
+# Install API key
+api.key.install(key='0d49769f4920428f1240cd67d86ee8d61ebaa4bc') # Install API key
+
+# Pull in tracts
+shapes.tract <- tigris::tracts(state = c('KY'),
+                               county = c(111))
+
+# Pull in blocks
+shapes.blocks <- tigris::block_groups(state = c('KY'),
+                               county = c(111))
+
+
+```
+
+
+```{r data-manipulation, echo=FALSE}
+
+## Manipulate Foreclosure Data
+
+# Bucket foreclosures into tract/blocks
+
+# Convert shapes.tract into df
+shapes.tract@data$id <- rownames(shapes.tract@data)
+
+# Convert polygons in tract to a data frame for plotting
+shapes.tract.df <- fortify(shapes.tract)
+
+# Join columns
+shapes.tract.df <- join(shapes.tract.df, shapes.tract@data, by="id")
+
+# Convert INTPTLAT and INTPTLON to numeric
+shapes.tract.df$INTPTLAT <- as.numeric(shapes.tract.df$INTPTLAT)
+shapes.tract.df$INTPTLON <- as.numeric(shapes.tract.df$INTPTLON)
+
+# Convert shapes.blocks into df
+shapes.blocks@data$id <- rownames(shapes.blocks@data)
+
+# Convert polygons in tract to a data frame for plotting
+shapes.blocks.df <- fortify(shapes.blocks)
+
+# Join columns
+shapes.blocks.df <- join(shapes.blocks.df, shapes.blocks@data, by="id")
+
+# Convert INTPTLAT and INTPTLON to numeric
+shapes.blocks.df$INTPTLAT <- as.numeric(shapes.blocks.df$INTPTLAT)
+shapes.blocks.df$INTPTLON <- as.numeric(shapes.blocks.df$INTPTLON)
+
+# Define points for functions to find tract
+points.1 <- matrix(NA, nrow = nrow(foreclosures), ncol = 2)
+points.1[,1] <- foreclosures$lon
+points.1[,2] <- foreclosures$lat
+
+points.2 <- matrix(NA, nrow = nrow(shapes.tract.df), ncol = 2)
+points.2[,1] <- shapes.tract.df$INTPTLON
+points.2[,2] <- shapes.tract.df$INTPTLAT
+
+# Find tract associated with minimum value
+foreclosures$tract <- get.min.tract(points.1,
+                                    points.2)
+
+# Define points for function to find block
+points.2 <- matrix(NA, nrow = nrow(shapes.blocks.df), ncol = 2)
+points.2[,1] <- shapes.blocks.df$INTPTLON
+points.2[,2] <- shapes.blocks.df$INTPTLAT
+
+# Find tract associated with minimum value
+foreclosures$block <- get.min.block(points.1,
+                                    points.2)
+
+
+# Calculate tract-level totals
+foreclosures.tract <- foreclosures %>% 
+  dplyr::group_by(tract) %>% 
+  dplyr::summarise('total' = n())
+
+# Calculate block-level totals
+foreclosures.block <- foreclosures %>% 
+  dplyr::group_by(block) %>% 
+  dplyr::summarise('total' = n())
+
+# Calculate combined totals
+foreclosures.combined <- foreclosures %>% 
+  dplyr::group_by(tract, block) %>% 
+  dplyr::summarise('total' = n())
+
+ggplotly(
+  ggplot(foreclosures.combined, aes(x = reorder(tract, -total), y = total, fill = block)) +
+    geom_bar(stat = 'identity'))
+
+## Manipulate Census Demographic Data
+
+# Convert tract-level data to df
+ownership.tract.df <- data.frame(paste0(str_pad(ownership.tract@geography$state, 2, "left", pad="0"), 
+                               str_pad(ownership.tract@geography$county, 3, "left", pad="0"), 
+                               str_pad(ownership.tract@geography$tract, 6, "left", pad="0")), 
+                        ownership.tract@estimate, 
+                        stringsAsFactors = FALSE)
+names(ownership.tract.df)[1] <- 'geoid'
+
+# Join with tract df
+foreclosure.tract.demog <- left_join(foreclosures.tract,
+                                     ownership.tract.df,
+                                     by = c('tract' = 'geoid'))
+
+# Merge with tract-level shapefile
+
+# Convert block-level data to df
+ownership.block.df <- data.frame(paste0(str_pad(ownership.block@geography$state, 2, "left", pad="0"), 
+                               str_pad(ownership.block@geography$county, 3, "left", pad="0"), 
+                               str_pad(ownership.block@geography$tract, 6, "left", pad="0"),
+                               str_pad(ownership.block@geography$blockgroup, 1, "left", pad="0")), 
+                        ownership.block@estimate, 
+                        stringsAsFactors = FALSE)
+names(ownership.block.df)[1] <- 'geoid'
+
+
+
+# Join with tract df
+foreclosure.block.demog <- left_join(foreclosures.block,
+                                     ownership.block.df,
+                                     by = c('block' = 'geoid'))
+
+# Merge with tract-level shapefile
+
+
+```
+
+```{r, data-visualization}
+
+# Plot foreclosures by tract
+ggplot(foreclosures.tract, aes(x = reorder(tract, -total), y = total)) + 
+  geom_bar(stat = 'identity') + coord_flip() + 
+  labs(title = 'Number of Foreclosures by Census Tract', 
+       subtitle = 'Data from September 2012 to June 2016', 
+       caption = 'Data provided by Develop Louisville via Louisville Open Data Portal')
+
+# Plot foreclosures by block
+ggplot(foreclosures.block, aes(x = reorder(block, -total), y = total)) + 
+  geom_bar(stat = 'identity') + coord_flip() + 
+  labs(title = 'Number of Foreclosures by Census Block', 
+       subtitle = 'Data from September 2012 to June 2016', 
+       caption = 'Data provided by Develop Louisville via Louisville Open Data Portal') + 
+  theme(axis.text = element_text(size = 6))
+
+```
+
+```{r, data-model}
+
+## Find Relationship Between Home Ownership and Foreclosures
+
+# Calculate at tract level
+foreclosure.tract.demog$Ownership.Rate <- foreclosure.tract.demog$Tenure..Owner.occupied / foreclosure.tract.demog$Tenure..Total.
+
+foreclosure.tract.demog[is.na(foreclosure.tract.demog)] <- 0
+
+# Calculate at block level
+foreclosure.block.demog$Ownership.Rate <- foreclosure.block.demog$Tenure..Owner.occupied / foreclosure.block.demog$Tenure..Total.
+
+foreclosure.block.demog[is.na(foreclosure.block.demog)] <- 0
+
+
+
+```
