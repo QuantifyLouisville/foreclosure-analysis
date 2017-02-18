@@ -137,7 +137,7 @@ geo.dat.tract <- geo.make(state = c("KY"),
 geo.dat.block <- geo.make(state = c("KY"),
                 county = c(111), 
                 tract = '*',
-                block.group = '*')
+                block = '*')
 
 # Pull tract-level data
 ownership.tract <- acs.fetch(endyear = 2015, 
@@ -163,7 +163,7 @@ shapes.tract <- tigris::tracts(state = c('KY'),
                                county = c(111))
 
 # Pull in blocks
-shapes.blocks <- tigris::block_groups(state = c('KY'),
+shapes.blocks <- tigris::blocks(state = c('KY'),
                                county = c(111))
 
 
@@ -240,10 +240,6 @@ foreclosures.combined <- foreclosures %>%
   dplyr::group_by(tract, block) %>% 
   dplyr::summarise('total' = n())
 
-ggplotly(
-  ggplot(foreclosures.combined, aes(x = reorder(tract, -total), y = total, fill = block)) +
-    geom_bar(stat = 'identity'))
-
 ## Manipulate Census Demographic Data
 
 # Convert tract-level data to df
@@ -260,6 +256,9 @@ foreclosure.tract.demog <- left_join(foreclosures.tract,
                                      by = c('tract' = 'geoid'))
 
 # Merge with tract-level shapefile
+shapes.tract.foreclosure.df <- left_join(shapes.tract.df,
+                                      foreclosure.tract.demog,
+                                      by = c('GEOID' = 'tract'))
 
 # Convert block-level data to df
 ownership.block.df <- data.frame(paste0(str_pad(ownership.block@geography$state, 2, "left", pad="0"), 
@@ -272,17 +271,22 @@ names(ownership.block.df)[1] <- 'geoid'
 
 
 
-# Join with tract df
+# Join with block df
 foreclosure.block.demog <- left_join(foreclosures.block,
                                      ownership.block.df,
                                      by = c('block' = 'geoid'))
 
 # Merge with tract-level shapefile
+shapes.blocks.foreclosure.df <- left_join(shapes.blocks.df,
+                                      foreclosure.block.demog,
+                                      by = c('GEOID10' = 'block'))
 
 
 ```
 
 ```{r, data-visualization}
+
+## Build Bar Charts
 
 # Plot foreclosures by tract
 ggplot(foreclosures.tract, aes(x = reorder(tract, -total), y = total)) + 
@@ -299,6 +303,88 @@ ggplot(foreclosures.block, aes(x = reorder(block, -total), y = total)) +
        caption = 'Data provided by Develop Louisville via Louisville Open Data Portal') + 
   theme(axis.text = element_text(size = 6))
 
+## Build Leaflet Maps
+
+# Add foreclosure totals and demographic data to tract shapefile
+shapes.tract.map <- shapes.tract
+shapes.tract.map@data <-data.frame(shapes.tract.map@data, 
+                               shapes.tract.foreclosure.df[match(shapes.tract.map@data[,'GEOID'],
+                                                                 shapes.tract.foreclosure.df[,'GEOID']),])
+
+# Define color
+shapes.tract.map@data$col <- sapply(shapes.tract.map@data$total, function(x) { 
+  
+  if (is.na(x)) { 
+    0
+  } else if (x <= quantile(shapes.tract.map@data$total, 0.25, na.rm = TRUE)) {
+    0.2
+  } else if (x <= quantile(shapes.tract.map@data$total, 0.5, na.rm = TRUE)) { 
+    0.4 
+  } else if (x <= quantile(shapes.tract.map@data$total, 0.75, na.rm = TRUE)) { 
+      0.6
+  } else { 
+      1
+    }
+})
+
+# Build tract map
+map.tract <- leaflet() %>%
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   options = tileOptions(minZoom = 10, maxZoom = 16)) %>%
+  addPolygons(
+    data = shapes.tract.map,
+    fillColor = '#ed1c24',  
+    fillOpacity = shapes.tract.map@data$col,         ## how transparent do you want the polygon to be?
+    color = "#fefefe",       ## color of borders between districts
+    weight = .5,
+    popup = paste0(
+     "<strong>Tract: </strong>",
+      shapes.tract.map@data$NAMELSAD,
+      "<br><strong>Total Foreclosures: </strong>",
+      shapes.tract.map@data$total
+    ))
+
+# Add foreclosure totals and demographic data to tract shapefile
+shapes.block.map <- shapes.blocks
+shapes.block.map@data <-data.frame(shapes.block.map@data, 
+                               shapes.blocks.foreclosure.df[match(shapes.block.map@data[,'GEOID10'],
+                                                                 shapes.blocks.foreclosure.df[,'GEOID10']),])
+
+# Define color
+shapes.block.map@data$col <- sapply(shapes.block.map@data$total, function(x) { 
+  
+  if (is.na(x)) { 
+    0
+  } else if (x <= quantile(shapes.block.map@data$total, 0.25, na.rm = TRUE)) {
+    0.2
+  } else if (x <= quantile(shapes.block.map@data$total, 0.5, na.rm = TRUE)) { 
+    0.4 
+  } else if (x <= quantile(shapes.block.map@data$total, 0.75, na.rm = TRUE)) { 
+      0.6
+  } else { 
+      1
+    }
+})
+
+# Build block map
+map.block <- leaflet() %>%
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   options = tileOptions(minZoom = 10, maxZoom = 16)) %>%
+  addPolygons(
+    data = shapes.block.map,
+    fillColor = '#ed1c24',  
+    fillOpacity = shapes.block.map@data$col,         ## how transparent do you want the polygon to be?
+    color = "#fefefe",       ## color of borders between districts
+    weight = .5,
+    popup = paste0(
+     "<strong>Block: </strong>",
+      shapes.block.map@data$NAME10,
+      "<br><strong>Total Foreclosures: </strong>",
+      shapes.block.map@data$total
+    ))
+
+
+
 ```
 
 ```{r, data-model}
@@ -314,7 +400,5 @@ foreclosure.tract.demog[is.na(foreclosure.tract.demog)] <- 0
 foreclosure.block.demog$Ownership.Rate <- foreclosure.block.demog$Tenure..Owner.occupied / foreclosure.block.demog$Tenure..Total.
 
 foreclosure.block.demog[is.na(foreclosure.block.demog)] <- 0
-
-
 
 ```
