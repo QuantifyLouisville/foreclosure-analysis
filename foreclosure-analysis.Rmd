@@ -344,6 +344,9 @@ map.tract <- leaflet() %>%
       shapes.tract.map@data$total
     ))
 
+# Save map
+saveWidget(map.tract, file = 'tract-foreclosures.html', selfcontained = T)
+
 # Add foreclosure totals and demographic data to tract shapefile
 shapes.block.map <- shapes.blocks
 shapes.block.map@data <-data.frame(shapes.block.map@data, 
@@ -383,7 +386,8 @@ map.block <- leaflet() %>%
       shapes.block.map@data$total
     ))
 
-
+# Save map
+saveWidget(map.block, file = 'block-foreclosures.html', selfcontained = T)
 
 ```
 
