@@ -255,6 +255,10 @@ foreclosure.tract.demog <- left_join(foreclosures.tract,
                                      ownership.tract.df,
                                      by = c('tract' = 'geoid'))
 
+# Calculate foreclosures per owner-occupied units
+foreclosure.tract.demog$foreclosureperhh <- foreclosure.tract.demog$total / foreclosure.tract.demog$Tenure..Owner.occupied
+
+
 # Merge with tract-level shapefile
 shapes.tract.foreclosure.df <- left_join(shapes.tract.df,
                                       foreclosure.tract.demog,
@@ -312,15 +316,15 @@ shapes.tract.map@data <-data.frame(shapes.tract.map@data,
                                                                  shapes.tract.foreclosure.df[,'GEOID']),])
 
 # Define color
-shapes.tract.map@data$col <- sapply(shapes.tract.map@data$total, function(x) { 
+shapes.tract.map@data$col <- sapply(shapes.tract.map@data$foreclosureperhh, function(x) { 
   
   if (is.na(x)) { 
     0
-  } else if (x <= quantile(shapes.tract.map@data$total, 0.25, na.rm = TRUE)) {
+  } else if (x <= quantile(shapes.tract.map@data$foreclosureperhh, 0.25, na.rm = TRUE)) {
     0.2
-  } else if (x <= quantile(shapes.tract.map@data$total, 0.5, na.rm = TRUE)) { 
+  } else if (x <= quantile(shapes.tract.map@data$foreclosureperhh, 0.5, na.rm = TRUE)) { 
     0.4 
-  } else if (x <= quantile(shapes.tract.map@data$total, 0.75, na.rm = TRUE)) { 
+  } else if (x <= quantile(shapes.tract.map@data$foreclosureperhh, 0.75, na.rm = TRUE)) { 
       0.6
   } else { 
       1
@@ -340,8 +344,8 @@ map.tract <- leaflet() %>%
     popup = paste0(
      "<strong>Tract: </strong>",
       shapes.tract.map@data$NAMELSAD,
-      "<br><strong>Total Foreclosures: </strong>",
-      shapes.tract.map@data$total
+      "<br><strong>% of Foreclosures per Owner-Occupied Units: </strong>",
+      percent(shapes.tract.map@data$foreclosureperhh)
     ))
 
 # Save map
@@ -388,6 +392,89 @@ map.block <- leaflet() %>%
 
 # Save map
 saveWidget(map.block, file = 'block-foreclosures.html', selfcontained = T)
+
+## Build Interactive Map
+
+# Define color function
+pal <- function(x, dat) { 
+  
+  sapply(x, function(x) { 
+  
+  if (is.na(x)) { 
+    return(0)
+  } else if (x <= quantile(dat, 0.25, na.rm = TRUE)) {
+    return(0.2)
+  } else if (x <= quantile(dat, 0.5, na.rm = TRUE)) { 
+    return(0.4) 
+  } else if (x <= quantile(dat, 0.75, na.rm = TRUE)) { 
+      return(0.6)
+  } else { 
+      return(1)
+  }
+  })
+}
+
+# Defined popup
+popup1 <- paste0(
+  "<strong>Tract: </strong>",
+  shapes.tract.map@data$NAMELSAD,
+  "<br><strong>Reported Foreclosures: </strong>",
+  round(shapes.tract.map@data$total, 1))
+
+popup2 <- paste0(
+     "<strong>Tract: </strong>",
+      shapes.tract.map@data$NAMELSAD,
+      "<br><strong>% of Owner-Occupied Units: </strong>",
+      percent(shapes.tract.map@data$foreclosureperhh))
+
+popup3 <- paste0(
+     "<strong>Tract: </strong>",
+      shapes.tract.map@data$NAMELSAD,
+      "<br><strong>Rental Rate: </strong>",
+      percent(1 - (shapes.tract.map@data$Tenure..Owner.occupied/shapes.tract.map@data$Tenure..Total.)))
+     
+
+# Build map
+map.int <- leaflet() %>%
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   options = tileOptions(minZoom = 10, maxZoom = 16)) %>%
+  addPolygons(
+    data = shapes.tract.map,
+    fillColor = '#ed1c24',  
+    fillOpacity = ~ pal(x = shapes.tract.map@data$total, 
+                      dat = shapes.tract.map@data$total),
+    color = "#fefefe",       ## color of borders between districts
+    weight = .5,
+    popup = popup1,
+    group = "Reported Foreclosure Count"
+  ) %>%
+    addPolygons(
+    data = shapes.tract.map,
+    fillColor = '#ed1c24',  
+    fillOpacity = ~ pal(x = shapes.tract.map@data$foreclosureperhh, 
+                      dat = shapes.tract.map@data$foreclosureperhh),
+    color = "#fefefe",       ## color of borders between districts
+    weight = .5,
+    popup = popup2,
+    group = "Reported Share of Foreclosure (% of Units)"
+  ) %>%
+    addPolygons(
+    data = shapes.tract.map,
+    fillColor = '#ed1c24',  
+    fillOpacity = ~ pal(x = shapes.tract.map@data$Tenure..Owner.occupied/shapes.tract.map@data$Tenure..Total., 
+                      dat = shapes.tract.map@data$Tenure..Owner.occupied/shapes.tract.map@data$Tenure..Total.)-1,
+    color = "#fefefe",       ## color of borders between districts
+    weight = .5,
+    popup = popup3,
+    group = "Rental Rate (% of Total Units)"
+  ) %>%
+  addLayersControl(
+    baseGroups = c('Reported Foreclosure Count', 
+                   'Reported Foreclosure per Owner-Occupied Housing Units',
+                   'Rental Rate (% of Total Units)'),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
 
 ```
 
